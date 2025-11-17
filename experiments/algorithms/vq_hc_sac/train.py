@@ -104,37 +104,42 @@ def create_trainer(env, save_dir: Path, device: str = 'cpu'):
     
     # 小规模: <10个智能体
     if n_agents < 10:
+        # 小规模问题建议使用CPU（GPU利用率低）
+        # 如果非要用GPU，需要更大的batch size
+        batch_size = 128 if (device == 'cuda' and n_agents >= 5) else 32
         config = VQHCSACConfig(
             n_roles=2,
             embedding_dim=32,
             encoder_hidden_dims=[64, 64],
             actor_hidden_dims=[128, 128],
             critic_hidden_dims=[128, 128],
-            batch_size=32,
+            batch_size=batch_size,
             buffer_size=50000,
             warmup_steps=500,
         )
     # 中等规模: 10-20个智能体
     elif n_agents < 20:
+        batch_size = 256 if device == 'cuda' else 64
         config = VQHCSACConfig(
             n_roles=3,
             embedding_dim=64,
             encoder_hidden_dims=[128, 128],
             actor_hidden_dims=[256, 256],
             critic_hidden_dims=[256, 256],
-            batch_size=64,
+            batch_size=batch_size,
             buffer_size=100000,
             warmup_steps=1000,
         )
     # 大规模: >=20个智能体
     else:
+        batch_size = 512 if device == 'cuda' else 128
         config = VQHCSACConfig(
             n_roles=4,
             embedding_dim=128,
             encoder_hidden_dims=[256, 256],
             actor_hidden_dims=[512, 512],
             critic_hidden_dims=[512, 512],
-            batch_size=128,
+            batch_size=batch_size,
             buffer_size=200000,
             warmup_steps=2000,
         )
