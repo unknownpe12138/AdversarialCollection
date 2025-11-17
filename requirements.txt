@@ -1,5 +1,9 @@
 # Core dependencies for Adversarial Collection Environment
 
+# Deep Learning (for VQ-HC-SAC algorithm)
+torch>=2.0.0
+torchvision>=0.15.0  # Optional, for advanced visualization
+
 # RL environment framework
 gymnasium>=0.29.0
 gym>=0.26.0  # Backward compatibility

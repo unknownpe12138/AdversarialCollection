@@ -17,6 +17,8 @@ from core.agent import Action, ActionType
 from utils.monitoring import EnvironmentMonitor, print_environment_info
 from utils.logger import create_experiment_logger
 import numpy as np
+from datetime import datetime
+from pathlib import Path
 
 
 def simple_greedy_policy(env, agent):
@@ -156,8 +158,13 @@ def main():
     print("Environment Monitoring & Logging Demonstration")
     print("="*70)
     
+    # Create timestamped run directory
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    run_dir = Path('logs') / f'run_{timestamp}'
+    run_dir.mkdir(parents=True, exist_ok=True)
+    
     # Create experiment logger
-    logger = create_experiment_logger('monitoring_demo', log_dir='logs')
+    logger = create_experiment_logger('monitoring_demo', log_dir=str(run_dir))
     
     # Create environment
     env_config = {
@@ -211,7 +218,8 @@ def main():
     monitor.print_statistics()
     
     # Save monitoring data
-    monitor.save_to_file('monitoring_results.json')
+    json_file = run_dir / 'monitoring_results.json'
+    monitor.save_to_file(str(json_file))
     
     # Test windowed statistics
     print("\n--- Last 3 Episodes Statistics ---")
@@ -222,9 +230,9 @@ def main():
     print(f"\n{'='*70}")
     print("Demonstration Complete!")
     print(f"{'='*70}")
-    print("\nResults saved to:")
+    print(f"\nResults saved to: {run_dir}")
     print("  - monitoring_results.json (monitoring data)")
-    print("  - logs/monitoring_demo_*.log (detailed logs)")
+    print("  - monitoring_demo_*.log (detailed logs)")
 
 
 if __name__ == '__main__':
