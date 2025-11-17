@@ -1,0 +1,30 @@
+# 环境配置: 5智能体 × 10节点
+# 中等规模实验
+
+name: "5vs10"
+description: "5 agents, 10 nodes"
+
+# 基本参数
+n_agents: 5
+n_nodes: 10
+
+# 图拓扑（随机图）
+graph_type: "random"
+edge_probability: 0.4   # 边生成概率（可选，默认0.3）
+graph_seed: 42        # 图结构随机种子（可选，null表示每次随机）
+
+# Episode设置
+max_steps: 100
+
+# 奖励设置
+use_pbrs: true
+death_penalty: 10.0
+gamma: 0.99
+
+# 节点属性范围
+utility_range: [10,10]
+risk_range: [0.1, 0.1]
+
+# 用于验证
+expected_agents: 5
+expected_nodes: 10

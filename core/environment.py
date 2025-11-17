@@ -52,6 +52,8 @@ class AdversarialCollectionEnv(gym.Env):
         gamma: float = 0.99,
         use_pbrs: bool = True,
         max_steps: int = 200,
+        edge_probability: float = 0.3,
+        graph_seed: Optional[int] = None,
         seed: Optional[int] = None
     ):
         """
@@ -69,7 +71,9 @@ class AdversarialCollectionEnv(gym.Env):
             gamma: Discount factor
             use_pbrs: Whether to use PBRS reward shaping
             max_steps: Maximum steps per episode
-            seed: Random seed
+            edge_probability: For random graph, edge creation probability (default: 0.3)
+            graph_seed: For random graph, seed for reproducibility (default: None)
+            seed: Random seed for environment dynamics
         """
         super().__init__()
         
@@ -92,7 +96,9 @@ class AdversarialCollectionEnv(gym.Env):
             n_nodes=n_nodes,
             edge_list=edge_list,
             graph_type=graph_type,
-            grid_size=grid_size
+            grid_size=grid_size,
+            edge_probability=edge_probability,
+            random_seed=graph_seed
         )
         
         # Create agents

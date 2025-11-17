@@ -1,0 +1,30 @@
+# 环境配置: 20智能体 × 50节点
+# 超大规模实验
+
+name: "20vs50"
+description: "Extra large scale: 20 agents, 50 nodes"
+
+# 基本参数
+n_agents: 20
+n_nodes: 50
+
+# 图拓扑（随机图）
+graph_type: "random"
+edge_probability: 0.3   # 边生成概率
+graph_seed: null        # 图结构种子（null=每次随机）
+
+# Episode设置
+max_steps: 200
+
+# 奖励设置
+use_pbrs: true
+death_penalty: 10.0
+gamma: 0.99
+
+# 节点属性范围
+utility_range: [5.0, 20.0]
+risk_range: [0.1, 0.5]
+
+# 用于验证
+expected_agents: 20
+expected_nodes: 50

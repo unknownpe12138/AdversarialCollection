@@ -1,0 +1,34 @@
+# 环境配置: 3智能体 × 6节点
+# 小规模基线实验
+
+name: "3vs6"
+description: "Small scale: 3 agents, 6 nodes, star topology"
+
+# 基本参数
+n_agents: 3
+n_nodes: 6
+
+# 图拓扑
+graph_type: "custom"
+edge_list:
+  - [0, 1]
+  - [0, 2]
+  - [0, 3]
+  - [0, 4]
+  - [0, 5]
+
+# Episode设置
+max_steps: 50
+
+# 奖励设置
+use_pbrs: true
+death_penalty: 10.0
+gamma: 0.99
+
+# 节点属性范围
+utility_range: [5.0, 20.0]
+risk_range: [0.1, 0.5]
+
+# 用于验证
+expected_agents: 3
+expected_nodes: 6

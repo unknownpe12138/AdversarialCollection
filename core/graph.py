@@ -22,7 +22,9 @@ class EnvironmentGraph:
         n_nodes: int,
         edge_list: Optional[List[Tuple[int, int]]] = None,
         graph_type: str = 'grid',
-        grid_size: Optional[Tuple[int, int]] = None
+        grid_size: Optional[Tuple[int, int]] = None,
+        edge_probability: float = 0.3,
+        random_seed: Optional[int] = None
     ):
         """
         Initialize environment graph.
@@ -32,6 +34,8 @@ class EnvironmentGraph:
             edge_list: List of edges as (node_i, node_j) pairs
             graph_type: 'custom', 'grid', 'random', or 'complete'
             grid_size: For grid type, (rows, cols)
+            edge_probability: For random type, probability of edge creation (default: 0.3)
+            random_seed: For random type, seed for reproducibility (default: None)
         """
         self.n_nodes = n_nodes
         self.base_node = 0
@@ -43,7 +47,7 @@ class EnvironmentGraph:
             self.graph.add_nodes_from(range(n_nodes))
             self.graph.add_edges_from(edge_list)
         else:
-            self.graph = self._create_graph(graph_type, grid_size)
+            self.graph = self._create_graph(graph_type, grid_size, edge_probability, random_seed)
         
         # Validate graph
         if not nx.is_connected(self.graph):
@@ -52,8 +56,17 @@ class EnvironmentGraph:
         # Node positions for visualization
         self.node_positions = self._compute_layout()
         
-    def _create_graph(self, graph_type: str, grid_size: Optional[Tuple[int, int]]) -> nx.Graph:
-        """Create graph based on type."""
+    def _create_graph(self, graph_type: str, grid_size: Optional[Tuple[int, int]],
+                     edge_probability: float = 0.3, random_seed: Optional[int] = None) -> nx.Graph:
+        """
+        Create graph based on type.
+        
+        Args:
+            graph_type: Type of graph to create
+            grid_size: Grid dimensions (for grid type)
+            edge_probability: Edge creation probability (for random type)
+            random_seed: Random seed for reproducibility (for random type)
+        """
         if graph_type == 'grid':
             if grid_size is None:
                 # Auto-determine grid size
@@ -75,11 +88,27 @@ class EnvironmentGraph:
             return G
             
         elif graph_type == 'random':
-            # Random connected graph
-            while True:
-                G = nx.erdos_renyi_graph(self.n_nodes, p=0.3, seed=None)
+            # Random connected graph using Erdős-Rényi model
+            # Try to generate a connected graph with specified parameters
+            max_attempts = 100
+            for attempt in range(max_attempts):
+                G = nx.erdos_renyi_graph(self.n_nodes, p=edge_probability, seed=random_seed)
                 if nx.is_connected(G):
                     return G
+                # If seed is specified, increment it for next attempt
+                if random_seed is not None:
+                    random_seed += 1
+            
+            # Fallback: ensure connectivity by adding edges to base node
+            G = nx.erdos_renyi_graph(self.n_nodes, p=edge_probability, seed=random_seed)
+            # Connect all components to base node
+            components = list(nx.connected_components(G))
+            for component in components:
+                if self.base_node not in component:
+                    # Connect this component to base node
+                    node_in_component = next(iter(component))
+                    G.add_edge(self.base_node, node_in_component)
+            return G
                     
         elif graph_type == 'complete':
             return nx.complete_graph(self.n_nodes)
