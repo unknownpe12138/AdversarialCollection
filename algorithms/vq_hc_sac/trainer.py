@@ -476,108 +476,94 @@ class VQHCSACTrainer:
     
     def _update_critics(self, batch: Dict) -> Dict[str, float]:
         """
-        Update critic networks for all roles.
-        
-        对每个角色的Twin Critics进行TD learning更新。
+        Update critic networks for all roles. Vectorized version.
         """
         losses = {}
         
         batch_size = batch['individual_states'].shape[0]
         n_agents = batch['individual_states'].shape[1]
         
-        # 收集每个角色的losses
-        role_critic_losses = {i: [] for i in range(self.config.n_roles)}
+        # Reshape to [batch*agents, ...]
+        flat_states = batch['individual_states'].view(batch_size * n_agents, -1)
+        flat_next_states = batch['next_individual_states'].view(batch_size * n_agents, -1)
+        flat_actions = batch['actions'].view(batch_size * n_agents, -1)
+        flat_rewards = batch['shaped_rewards'].view(batch_size * n_agents)
+        flat_role_assignments = batch['role_assignments'].view(batch_size * n_agents)
         
-        for b in range(batch_size):
-            for i in range(n_agents):
-                role_id = batch['role_assignments'][b, i].item()
-                
-                # 获取transition
-                state = batch['individual_states'][b, i]
-                action = batch['actions'][b, i]
-                reward = batch['shaped_rewards'][b, i]
-                next_state = batch['next_individual_states'][b, i]
-                done = batch['dones'][b]
-                env_state = batch['env_states'][b]
-                next_env_state = batch['next_env_states'][b]
-                
-                # 编码状态为嵌入
-                with torch.no_grad():
-                    agent_embeddings = self.encoder(batch['individual_states'][b])
-                    next_agent_embeddings = self.encoder(batch['next_individual_states'][b])
-                
-                # 计算角色聚合（使用嵌入而不是原始状态）
-                role_agg = self.role_manager.compute_role_aggregations(
-                    agent_embeddings,
-                    batch['role_assignments'][b],
-                    method='mean'
-                )
-                next_role_agg = self.role_manager.compute_role_aggregations(
-                    next_agent_embeddings,
-                    batch['role_assignments'][b],
-                    method='mean'
-                )
-                
-                # 获取网络
-                critic = self.role_manager.get_critic(role_id)
-                target_critic = self.role_manager.get_target_critic(role_id)
-                actor = self.role_manager.get_actor(role_id)
-                alpha = self.temp_manager.get_alpha(role_id)
-                
-                # 计算target Q
-                with torch.no_grad():
-                    next_action, next_log_prob = actor.sample(next_state, deterministic=False)
-                    next_q1, next_q2 = target_critic(
-                        next_state.unsqueeze(0),
-                        next_action.unsqueeze(0),
-                        next_env_state.unsqueeze(0),
-                        role_agg.unsqueeze(0)
-                    )
-                    next_q = torch.min(next_q1, next_q2).squeeze()
-                    target_q = reward + (1 - done) * self.config.gamma * (
-                        next_q - alpha * next_log_prob
-                    )
-                
-                # 当前Q值
-                q1, q2 = critic(
-                    state.unsqueeze(0),
-                    action.unsqueeze(0),
-                    env_state.unsqueeze(0),
-                    role_agg.unsqueeze(0)
-                )
-                
-                # TD losses
-                q1_loss = torch.nn.functional.mse_loss(q1.squeeze(), target_q)
-                q2_loss = torch.nn.functional.mse_loss(q2.squeeze(), target_q)
-                
-                role_critic_losses[role_id].append((q1_loss, q2_loss))
+        # Expand dones and env_states
+        flat_dones = batch['dones'].unsqueeze(1).expand(batch_size, n_agents).reshape(batch_size * n_agents)
+        flat_env_states = batch['env_states'].unsqueeze(1).expand(batch_size, n_agents, -1).reshape(batch_size * n_agents, -1)
+        flat_next_env_states = batch['next_env_states'].unsqueeze(1).expand(batch_size, n_agents, -1).reshape(batch_size * n_agents, -1)
         
-        # 更新每个角色的critic
+        # Encode all states at once
+        with torch.no_grad():
+            batch_agent_embeddings = self.encoder(batch['individual_states'].view(-1, self.individual_state_dim)).view(batch_size, n_agents, -1)
+            batch_next_agent_embeddings = self.encoder(batch['next_individual_states'].view(-1, self.individual_state_dim)).view(batch_size, n_agents, -1)
+        
+        # Compute role aggregations for all batches
+        batch_role_agg = torch.stack([
+            self.role_manager.compute_role_aggregations(batch_agent_embeddings[b], batch['role_assignments'][b], method='mean')
+            for b in range(batch_size)
+        ])
+        batch_next_role_agg = torch.stack([
+            self.role_manager.compute_role_aggregations(batch_next_agent_embeddings[b], batch['role_assignments'][b], method='mean')
+            for b in range(batch_size)
+        ])
+        
+        # Expand role aggregations
+        flat_role_agg = batch_role_agg.unsqueeze(1).expand(batch_size, n_agents, self.config.n_roles, -1).reshape(batch_size * n_agents, self.config.n_roles, -1)
+        flat_next_role_agg = batch_next_role_agg.unsqueeze(1).expand(batch_size, n_agents, self.config.n_roles, -1).reshape(batch_size * n_agents, self.config.n_roles, -1)
+        
+        # Process by role
         total_critic_loss = 0.0
         for role_id in range(self.config.n_roles):
-            if role_critic_losses[role_id]:
-                q1_losses = [loss[0] for loss in role_critic_losses[role_id]]
-                q2_losses = [loss[1] for loss in role_critic_losses[role_id]]
-                
-                role_q1_loss = torch.stack(q1_losses).mean()
-                role_q2_loss = torch.stack(q2_losses).mean()
-                role_total_loss = role_q1_loss + role_q2_loss
-                
-                total_critic_loss += role_total_loss
-                
-                losses[f'critic_role_{role_id}_q1'] = role_q1_loss.item()
-                losses[f'critic_role_{role_id}_q2'] = role_q2_loss.item()
+            role_mask = (flat_role_assignments == role_id)
+            if not role_mask.any():
+                continue
+            
+            # Extract role-specific data
+            role_states = flat_states[role_mask]
+            role_actions = flat_actions[role_mask]
+            role_rewards = flat_rewards[role_mask]
+            role_next_states = flat_next_states[role_mask]
+            role_dones = flat_dones[role_mask]
+            role_env_states = flat_env_states[role_mask]
+            role_next_env_states = flat_next_env_states[role_mask]
+            role_agg_data = flat_role_agg[role_mask]
+            role_next_agg_data = flat_next_role_agg[role_mask]
+            
+            # Get networks 
+            critic = self.role_manager.get_critic(role_id)
+            target_critic = self.role_manager.get_target_critic(role_id)
+            actor = self.role_manager.get_actor(role_id)
+            alpha = self.temp_manager.get_alpha(role_id)
+            
+            # Compute target Q values (vectorized)
+            with torch.no_grad():
+                next_actions, next_log_probs = actor.sample(role_next_states, deterministic=False)
+                next_q1, next_q2 = target_critic(role_next_states, next_actions, role_next_env_states, role_next_agg_data)
+                next_q = torch.min(next_q1, next_q2).squeeze(-1)
+                target_q = role_rewards + (1 - role_dones) * self.config.gamma * (next_q - alpha * next_log_probs)
+            
+            # Current Q values
+            q1, q2 = critic(role_states, role_actions, role_env_states, role_agg_data)
+            
+            # TD losses
+            q1_loss = torch.nn.functional.mse_loss(q1.squeeze(-1), target_q)
+            q2_loss = torch.nn.functional.mse_loss(q2.squeeze(-1), target_q)
+            role_total_loss = q1_loss + q2_loss
+            
+            total_critic_loss += role_total_loss
+            losses[f'critic_role_{role_id}_q1'] = q1_loss.item()
+            losses[f'critic_role_{role_id}_q2'] = q2_loss.item()
         
-        # 反向传播
+        # Backpropagation
         if total_critic_loss > 0:
             self.critic_optimizer.zero_grad()
             total_critic_loss.backward()
             
             if self.config.clip_grad_norm is not None:
-                torch.nn.utils.clip_grad_norm_(
-                    self.role_manager.get_critic_parameters(),
-                    self.config.clip_grad_norm
-                )
+                torch.nn.utils.clip_grad_norm_(self.role_manager.get_critic_parameters(), self.config.clip_grad_norm)
             
             self.critic_optimizer.step()
             losses['critic_total'] = total_critic_loss.item()
@@ -586,177 +572,140 @@ class VQHCSACTrainer:
     
     def _update_actors(self, batch: Dict) -> Dict[str, float]:
         """
-        Update actor networks for all roles.
-        
-        对每个角色的策略网络进行更新，最大化 Q值 - α*熵。
+        Update actor networks for all roles. Vectorized version.
         """
         losses = {}
         
         batch_size = batch['individual_states'].shape[0]
         n_agents = batch['individual_states'].shape[1]
         
-        role_actor_losses = {i: [] for i in range(self.config.n_roles)}
+        # Reshape
+        flat_states = batch['individual_states'].view(batch_size * n_agents, -1)
+        flat_role_assignments = batch['role_assignments'].view(batch_size * n_agents)
+        flat_env_states = batch['env_states'].unsqueeze(1).expand(batch_size, n_agents, -1).reshape(batch_size * n_agents, -1)
         
-        for b in range(batch_size):
-            # 编码整个batch的状态（一次性完成）
-            with torch.no_grad():
-                agent_embeddings = self.encoder(batch['individual_states'][b])
-            
-            # 计算角色聚合
-            role_agg = self.role_manager.compute_role_aggregations(
-                agent_embeddings,
-                batch['role_assignments'][b],
-                method='mean'
-            )
-            
-            for i in range(n_agents):
-                role_id = batch['role_assignments'][b, i].item()
-                
-                state = batch['individual_states'][b, i]
-                env_state = batch['env_states'][b]
-                
-                # 获取网络
-                actor = self.role_manager.get_actor(role_id)
-                critic = self.role_manager.get_critic(role_id)
-                alpha = self.temp_manager.get_alpha(role_id)
-                
-                # 从当前策略采样
-                action, log_prob = actor.sample(state, deterministic=False)
-                
-                # 计算Q值（detach critic）
-                with torch.no_grad():
-                    q1, q2 = critic(
-                        state.unsqueeze(0),
-                        action.unsqueeze(0),
-                        env_state.unsqueeze(0),
-                        role_agg.unsqueeze(0)
-                    )
-                    q_value = torch.min(q1, q2).squeeze()
-                
-                # Actor loss: α*log_prob - Q
-                actor_loss = (alpha.detach() * log_prob - q_value)
-                
-                role_actor_losses[role_id].append((actor_loss, log_prob))
+        # Encode all states at once
+        with torch.no_grad():
+            batch_agent_embeddings = self.encoder(batch['individual_states'].view(-1, self.individual_state_dim)).view(batch_size, n_agents, -1)
         
-        # 更新每个角色的actor
+        # Compute role aggregations
+        batch_role_agg = torch.stack([
+            self.role_manager.compute_role_aggregations(batch_agent_embeddings[b], batch['role_assignments'][b], method='mean')
+            for b in range(batch_size)
+        ])
+        flat_role_agg = batch_role_agg.unsqueeze(1).expand(batch_size, n_agents, self.config.n_roles, -1).reshape(batch_size * n_agents, self.config.n_roles, -1)
+        
+        # Process by role
         total_actor_loss = 0.0
         for role_id in range(self.config.n_roles):
-            if role_actor_losses[role_id]:
-                actor_losses_list = [loss[0] for loss in role_actor_losses[role_id]]
-                log_probs_list = [loss[1] for loss in role_actor_losses[role_id]]
-                
-                role_actor_loss = torch.stack(actor_losses_list).mean()
-                mean_log_prob = torch.stack(log_probs_list).mean()
-                
-                total_actor_loss += role_actor_loss
-                
-                losses[f'actor_role_{role_id}'] = role_actor_loss.item()
-                losses[f'actor_role_{role_id}_entropy'] = -mean_log_prob.item()
+            role_mask = (flat_role_assignments == role_id)
+            if not role_mask.any():
+                continue
+            
+            role_states = flat_states[role_mask]
+            role_env_states = flat_env_states[role_mask]
+            role_agg_data = flat_role_agg[role_mask]
+            
+            actor = self.role_manager.get_actor(role_id)
+            critic = self.role_manager.get_critic(role_id)
+            alpha = self.temp_manager.get_alpha(role_id)
+            
+            # Sample actions from policy
+            actions, log_probs = actor.sample(role_states, deterministic=False)
+            
+            # Compute Q values
+            with torch.no_grad():
+                q1, q2 = critic(role_states, actions, role_env_states, role_agg_data)
+                q_values = torch.min(q1, q2).squeeze(-1)
+            
+            # Actor loss
+            role_actor_loss = (alpha.detach() * log_probs - q_values).mean()
+            total_actor_loss += role_actor_loss
+            
+            losses[f'actor_role_{role_id}'] = role_actor_loss.item()
+            losses[f'actor_role_{role_id}_entropy'] = -log_probs.mean().item()
         
-        # 反向传播
+        # Backpropagation
         if total_actor_loss != 0:
             self.actor_optimizer.zero_grad()
             total_actor_loss.backward()
             
             if self.config.clip_grad_norm is not None:
-                torch.nn.utils.clip_grad_norm_(
-                    self.role_manager.get_actor_parameters(),
-                    self.config.clip_grad_norm
-                )
+                torch.nn.utils.clip_grad_norm_(self.role_manager.get_actor_parameters(), self.config.clip_grad_norm)
             
             self.actor_optimizer.step()
             losses['actor_total'] = total_actor_loss.item()
         
         return losses
-    
+
     def _update_alphas(self, batch: Dict) -> Dict[str, float]:
         """
-        Update temperature parameters for all roles.
-        
-        自动调整每个角色的探索参数 α，使熵接近目标值。
+        Update temperature parameters for all roles. Vectorized version.
         """
         losses = {}
         
         batch_size = batch['individual_states'].shape[0]
         n_agents = batch['individual_states'].shape[1]
         
-        # 收集每个角色的log_probs
-        role_log_probs = {i: [] for i in range(self.config.n_roles)}
+        # Reshape
+        flat_states = batch['individual_states'].view(batch_size * n_agents, -1)
+        flat_role_assignments = batch['role_assignments'].view(batch_size * n_agents)
         
-        for b in range(batch_size):
-            for i in range(n_agents):
-                role_id = batch['role_assignments'][b, i].item()
-                state = batch['individual_states'][b, i]
-                
-                actor = self.role_manager.get_actor(role_id)
-                
-                # 采样获取log_prob
-                with torch.no_grad():
-                    _, log_prob = actor.sample(state, deterministic=False)
-                
-                role_log_probs[role_id].append(log_prob)
-        
-        # 对每个角色更新alpha
+        # Process by role
         role_alpha_losses = {}
         for role_id in range(self.config.n_roles):
-            if role_log_probs[role_id]:
-                log_probs = torch.stack(role_log_probs[role_id])
-                alpha_loss = self.temp_manager.compute_alpha_loss(role_id, log_probs)
-                role_alpha_losses[role_id] = alpha_loss
-                
-                losses[f'alpha_role_{role_id}'] = alpha_loss.item()
-                losses[f'alpha_role_{role_id}_value'] = self.temp_manager.get_alpha(role_id).item()
+            role_mask = (flat_role_assignments == role_id)
+            if not role_mask.any():
+                continue
+            
+            role_states = flat_states[role_mask]
+            actor = self.role_manager.get_actor(role_id)
+            
+            # Sample to get log probs
+            with torch.no_grad():
+                _, log_probs = actor.sample(role_states, deterministic=False)
+            
+            # Compute alpha loss
+            alpha_loss = self.temp_manager.compute_alpha_loss(role_id, log_probs)
+            role_alpha_losses[role_id] = alpha_loss
+            
+            losses[f'alpha_role_{role_id}'] = alpha_loss.item()
+            losses[f'alpha_role_{role_id}_value'] = self.temp_manager.get_alpha(role_id).item()
         
-        # 更新所有alpha
+        # Update all alphas
         if role_alpha_losses:
             alpha_loss_values = self.temp_manager.update(role_alpha_losses)
             losses['alpha_total'] = sum(alpha_loss_values.values())
         
         return losses
-    
+
     def _update_vq_module(self, batch: Dict) -> Dict[str, float]:
         """
-        Update VQ module (encoder and codebook).
-        
-        更新VQ编码器和编码本，学习角色表征。
+        Update VQ module (encoder and codebook). Vectorized version.
         """
         losses = {}
         
         batch_size = batch['individual_states'].shape[0]
         n_agents = batch['individual_states'].shape[1]
         
-        all_embeddings = []
-        all_quantized = []
-        all_role_ids = []
+        # Process all states at once
+        flat_states = batch['individual_states'].view(batch_size * n_agents, -1)
         
-        # 前向传播
-        for b in range(batch_size):
-            for i in range(n_agents):
-                state = batch['individual_states'][b, i]
-                
-                # VQ forward
-                role_id, embedding, quantized_emb, vq_losses = self.vq_module(
-                    state, compute_loss=True
-                )
-                
-                all_embeddings.append(embedding)
-                all_quantized.append(quantized_emb)
-                all_role_ids.append(role_id)
+        # VQ forward pass for all states
+        all_outputs = [self.vq_module(state, compute_loss=True) for state in flat_states]
         
-        # Stack
-        embeddings = torch.stack(all_embeddings)
-        quantized_embeddings = torch.stack(all_quantized)
-        role_ids = torch.stack(all_role_ids)
+        # Unpack
+        role_ids = torch.stack([out[0] for out in all_outputs])
+        embeddings = torch.stack([out[1] for out in all_outputs])
+        quantized_embeddings = torch.stack([out[2] for out in all_outputs])
         
-        # 计算VQ losses
-        total_vq_loss, vq_loss_dict = self.vq_loss.total_vq_loss(
-            embeddings, quantized_embeddings
-        )
+        # Compute VQ losses
+        total_vq_loss, vq_loss_dict = self.vq_loss.total_vq_loss(embeddings, quantized_embeddings)
         
         # Perplexity
         perplexity = self.vq_loss.compute_perplexity(role_ids, self.config.n_roles)
         
-        # 反向传播
+        # Backpropagation
         self.vq_optimizer.zero_grad()
         total_vq_loss.backward()
         
@@ -766,19 +715,19 @@ class VQHCSACTrainer:
         
         self.vq_optimizer.step()
         
-        # 记录
+        # Record
         losses['vq_codebook'] = vq_loss_dict['codebook_loss'].item()
         losses['vq_commitment'] = vq_loss_dict['commitment_loss'].item()
         losses['vq_total'] = total_vq_loss.item()
         losses['vq_perplexity'] = perplexity.item()
         
-        # 编码本使用率
+        # Codebook usage
         usage = self.vq_module.get_codebook_usage()
         for i, u in enumerate(usage):
             losses[f'codebook_usage_role_{i}'] = u
         
         return losses
-    
+
     def _process_observations(self, obs: Any) -> torch.Tensor:
         """Convert observations to tensor."""
         if isinstance(obs, tuple):

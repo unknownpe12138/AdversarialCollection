@@ -187,9 +187,9 @@ class RoleManager:
         
         batch_size, n_agents, state_dim = agent_states.shape
         
-        # Initialize aggregations
+        # Initialize aggregations - use the actual state_dim from input
         role_aggregations = torch.zeros(
-            batch_size, self.n_roles, self.role_aggregation_dim,
+            batch_size, self.n_roles, state_dim,  # Use state_dim instead of self.role_aggregation_dim
             device=self.device
         )
         
