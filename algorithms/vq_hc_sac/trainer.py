@@ -142,12 +142,7 @@ class VQHCSACTrainer:
         # Environment state dimension (simplified: sum of all obs)
         self.env_state_dim = self.individual_state_dim * self.n_agents
         
-        print(f"Environment dimensions extracted:")
-        print(f"  Agents: {self.n_agents}")
-        print(f"  Individual state dim: {self.individual_state_dim}")
-        print(f"  Env state dim: {self.env_state_dim}")
-        print(f"  Action dim: {self.action_dim}")
-        print(f"  Action type: {self.action_type}")
+        # Environment dimensions extracted
     
     def _init_networks(self):
         """Initialize neural networks."""
@@ -168,7 +163,7 @@ class VQHCSACTrainer:
             ema_decay=self.config.codebook_ema_decay
         ).to(self.device)
         
-        print(f"✓ Networks initialized")
+        # Networks initialized
     
     def _init_components(self):
         """Initialize training components."""
@@ -207,7 +202,7 @@ class VQHCSACTrainer:
             device=self.device
         )
         
-        print(f"✓ Components initialized")
+        # Components initialized
     
     def _init_losses(self):
         """Initialize loss calculators."""
@@ -221,7 +216,7 @@ class VQHCSACTrainer:
             use_ema_codebook=self.config.use_ema_codebook
         )
         
-        print(f"✓ Losses initialized")
+        # Losses initialized
     
     def _init_optimizers(self):
         """Initialize optimizers."""
@@ -243,7 +238,7 @@ class VQHCSACTrainer:
         
         # Alpha optimizer is handled by TemperatureManager
         
-        print(f"✓ Optimizers initialized")
+        # Optimizers initialized
     
     def train(
         self,
@@ -277,27 +272,16 @@ class VQHCSACTrainer:
         }
         
         # Reset environment
-        print(f"[{self._ts()}] Resetting environment...")
         obs, _ = self.env.reset()
         episode_return = np.zeros(self.n_agents)
         episode_length = 0
-        print(f"[{self._ts()}] Environment reset complete")
         
         start_time = time.time()
         last_print_time = time.time()
         
         # Training loop
         while self.total_steps < total_steps:
-            # Print progress every 100 steps
-            if self.total_steps % 100 == 0:
-                current_time = time.time()
-                time_since_last = current_time - last_print_time
-                print(f"[{self._ts()}] Step {self.total_steps}/{total_steps}, Episode {self.episode_count}, Time since last print: {time_since_last:.2f}s")
-                last_print_time = current_time
-            
             # Collect experience
-            if self.total_steps % 50 == 0:
-                print(f"[{self._ts()}] Collecting step {self.total_steps}...")
             obs, episode_return, episode_length, episode_done = self._collect_step(
                 obs, episode_return, episode_length
             )
@@ -305,21 +289,14 @@ class VQHCSACTrainer:
             # Update networks (after warmup)
             if self.total_steps > self.config.warmup_steps:
                 if self.total_steps % self.config.update_frequency == 0:
-                    print(f"[{self._ts()}] Starting network update at step {self.total_steps}...")
                     for update_idx in range(self.config.updates_per_step):
-                        print(f"[{self._ts()}]   Update {update_idx+1}/{self.config.updates_per_step}")
                         losses = self._update_networks()
                         
                         if losses is not None:
                             history['losses'].append(losses)
-                            if self.total_steps % 100 == 0:
-                                print(f"[{self._ts()}]   Loss summary: critic={losses.get('critic_total', 0):.4f}, actor={losses.get('actor_total', 0):.4f}, vq={losses.get('vq_total', 0):.4f}")
-            elif self.total_steps % 100 == 0:
-                print(f"[{self._ts()}] Still in warmup phase ({self.total_steps}/{self.config.warmup_steps})")
             
             # Episode end
             if episode_done:
-                print(f"[{self._ts()}] Episode {self.episode_count} ended with return {episode_return.sum():.2f}, length {episode_length}")
                 self.episode_count += 1
                 self.episode_returns.append(episode_return.sum())
                 self.episode_lengths.append(episode_length)
@@ -328,11 +305,9 @@ class VQHCSACTrainer:
                 history['episode_lengths'].append(episode_length)
                 
                 # Reset for new episode
-                print(f"[{self._ts()}] Resetting for new episode...")
                 obs, _ = self.env.reset()
                 episode_return = np.zeros(self.n_agents)
                 episode_length = 0
-                print(f"[{self._ts()}] New episode started")
             
             # Logging
             if self.total_steps % log_interval == 0:
@@ -375,30 +350,16 @@ class VQHCSACTrainer:
         Returns:
             next_obs, episode_return, episode_length, done
         """
-        if self.total_steps % 200 == 0:
-            print(f"[{self._ts()}] _collect_step: Processing observations...")
-        
         # Convert observations to tensors
         individual_states = self._process_observations(obs)
         env_state = self._compute_env_state(individual_states)
         
-        if self.total_steps % 200 == 0:
-            print(f"[{self._ts()}] _collect_step: States shape: {individual_states.shape}, Env state shape: {env_state.shape}")
-            print(f"[{self._ts()}] _collect_step: Selecting actions...")
-        
         # Assign roles and get actions
         actions, role_assignments = self._select_actions(individual_states)
-        
-        if self.total_steps % 200 == 0:
-            print(f"[{self._ts()}] _collect_step: Actions selected: {actions}, Role assignments: {role_assignments}")
-            print(f"[{self._ts()}] _collect_step: Stepping environment...")
         
         # Step environment
         next_obs, rewards, terminated, truncated, info = self.env.step(actions)
         done = terminated or truncated
-        
-        if self.total_steps % 200 == 0:
-            print(f"[{self._ts()}] _collect_step: Step complete. Rewards: {rewards}, Done: {done}")
         
         # Process next state
         next_individual_states = self._process_observations(next_obs)
@@ -450,9 +411,6 @@ class VQHCSACTrainer:
         Returns:
             actions, role_assignments
         """
-        if self.total_steps % 500 == 0:
-            print(f"[{self._ts()}] _select_actions: Starting action selection for {self.n_agents} agents")
-        
         with torch.no_grad():
             # Assign roles
             role_assignments = torch.zeros(self.n_agents, dtype=torch.long, device=self.device)
@@ -460,8 +418,6 @@ class VQHCSACTrainer:
             for i in range(self.n_agents):
                 role_id = self.vq_module.get_role_assignment(individual_states[i])
                 role_assignments[i] = role_id
-                if self.total_steps % 500 == 0:
-                    print(f"[{self._ts()}]   Agent {i}: assigned role {role_id.item()}")
             
             # Sample actions
             actions = []
@@ -473,9 +429,6 @@ class VQHCSACTrainer:
                 deterministic = self.total_steps < self.config.warmup_steps
                 action, log_prob = actor.sample(individual_states[i], deterministic=deterministic)
                 
-                if self.total_steps % 500 == 0:
-                    print(f"[{self._ts()}]   Agent {i}: action={action.item() if self.action_type == 'discrete' else action.cpu().numpy()}, deterministic={deterministic}")
-                
                 if self.action_type == 'discrete':
                     actions.append(int(action.item()))  # 确保是Python int
                 else:
@@ -484,9 +437,6 @@ class VQHCSACTrainer:
             # 对于离散动作，保持为列表；连续动作转为array
             if self.action_type == 'continuous':
                 actions = np.array(actions)
-        
-        if self.total_steps % 500 == 0:
-            print(f"[{self._ts()}] _select_actions: Action selection complete")
         
         return actions, role_assignments
     
@@ -498,58 +448,20 @@ class VQHCSACTrainer:
             Dictionary of losses (or None if buffer not ready)
         """
         if not self.replay_buffer.is_ready(self.config.batch_size):
-            if self.total_steps % 500 == 0:
-                buffer_size = self.replay_buffer.get_statistics()['size']
-                print(f"[{self._ts()}] Buffer not ready: {buffer_size}/{self.config.batch_size} samples")
             return None
-        
-        if self.total_steps % 200 == 0:
-            print(f"[{self._ts()}] _update_networks: Sampling batch...")
         
         # Sample batch
         batch = self.replay_buffer.sample(self.config.batch_size)
         
-        if self.total_steps % 200 == 0:
-            print(f"[{self._ts()}] _update_networks: Batch sampled, shapes:")
-            for key, val in batch.items():
-                if isinstance(val, torch.Tensor):
-                    print(f"[{self._ts()}]   {key}: {val.shape}")
-        
         # Update critics, actors, alphas, and VQ
         losses = {}
-        
-        # Always print for debugging the slowness issue
-        print(f"[{self._ts()}] _update_networks: Starting critic update...")
-        critic_start = time.time()
         losses.update(self._update_critics(batch))
-        critic_time = time.time() - critic_start
-        print(f"[{self._ts()}] _update_networks: Critic update done, took {critic_time:.3f}s")
-        
-        print(f"[{self._ts()}] _update_networks: Starting actor update...")
-        actor_start = time.time()
         losses.update(self._update_actors(batch))
-        actor_time = time.time() - actor_start
-        print(f"[{self._ts()}] _update_networks: Actor update done, took {actor_time:.3f}s")
-        
-        print(f"[{self._ts()}] _update_networks: Starting alpha update...")
-        alpha_start = time.time()
         losses.update(self._update_alphas(batch))
-        alpha_time = time.time() - alpha_start
-        print(f"[{self._ts()}] _update_networks: Alpha update done, took {alpha_time:.3f}s")
-        
-        print(f"[{self._ts()}] _update_networks: Starting VQ module update...")
-        vq_start = time.time()
         losses.update(self._update_vq_module(batch))
-        vq_time = time.time() - vq_start
-        print(f"[{self._ts()}] _update_networks: VQ module update done, took {vq_time:.3f}s")
         
         # Soft update target networks
-        if self.total_steps % 200 == 0:
-            print(f"[{self._ts()}] _update_networks: Soft updating target networks...")
         self.role_manager.soft_update_target_networks(self.config.tau)
-        
-        if self.total_steps % 200 == 0:
-            print(f"[{self._ts()}] _update_networks: Update complete")
         
         return losses
     
@@ -557,16 +469,10 @@ class VQHCSACTrainer:
         """
         Update critic networks for all roles. Vectorized version.
         """
-        if self.total_steps % 400 == 0:
-            print(f"[{self._ts()}]   _update_critics: Starting critic update")
-        
         losses = {}
         
         batch_size = batch['individual_states'].shape[0]
         n_agents = batch['individual_states'].shape[1]
-        
-        if self.total_steps % 400 == 0:
-            print(f"[{self._ts()}]   _update_critics: batch_size={batch_size}, n_agents={n_agents}")
         
         # Reshape to [batch*agents, ...]
         flat_states = batch['individual_states'].view(batch_size * n_agents, -1)
@@ -586,8 +492,6 @@ class VQHCSACTrainer:
             batch_next_agent_embeddings = self.encoder(batch['next_individual_states'].view(-1, self.individual_state_dim)).view(batch_size, n_agents, -1)
         
         # Compute role aggregations for all batches
-        print(f"[{self._ts()}]   _update_critics: Computing role aggregations...")
-        agg_start = time.time()
         batch_role_agg = torch.stack([
             self.role_manager.compute_role_aggregations(batch_agent_embeddings[b], batch['role_assignments'][b], method='mean')
             for b in range(batch_size)
@@ -596,8 +500,6 @@ class VQHCSACTrainer:
             self.role_manager.compute_role_aggregations(batch_next_agent_embeddings[b], batch['role_assignments'][b], method='mean')
             for b in range(batch_size)
         ])
-        agg_time = time.time() - agg_start
-        print(f"[{self._ts()}]   _update_critics: Role aggregations done in {agg_time:.3f}s")
         
         # Expand role aggregations
         flat_role_agg = batch_role_agg.unsqueeze(1).expand(batch_size, n_agents, self.config.n_roles, -1).reshape(batch_size * n_agents, self.config.n_roles, -1)
@@ -608,12 +510,7 @@ class VQHCSACTrainer:
         for role_id in range(self.config.n_roles):
             role_mask = (flat_role_assignments == role_id)
             if not role_mask.any():
-                if self.total_steps % 400 == 0:
-                    print(f"[{self._ts()}]   _update_critics: No agents with role {role_id}, skipping")
                 continue
-            
-            if self.total_steps % 400 == 0:
-                print(f"[{self._ts()}]   _update_critics: Updating critic for role {role_id}, {role_mask.sum().item()} samples")
             
             # Extract role-specific data
             role_states = flat_states[role_mask]
@@ -781,30 +678,18 @@ class VQHCSACTrainer:
         """
         Update VQ module (encoder and codebook). Vectorized version.
         """
-        if self.total_steps % 400 == 0:
-            print(f"[{self._ts()}]   _update_vq_module: Starting VQ update")
-        
         losses = {}
         
         batch_size = batch['individual_states'].shape[0]
         n_agents = batch['individual_states'].shape[1]
         
-        if self.total_steps % 400 == 0:
-            print(f"[{self._ts()}]   _update_vq_module: Processing {batch_size * n_agents} states")
-        
         # Process all states at once
         flat_states = batch['individual_states'].view(batch_size * n_agents, -1)
         
         # VQ forward pass for all states (batched version)
-        print(f"[{self._ts()}]   _update_vq_module: Running VQ forward passes (batched)...")
-        vq_forward_start = time.time()
-        
         # Process all states in one batch instead of loop
         # The VQ module returns 4 values when compute_loss=True
         role_ids, embeddings, quantized_embeddings, vq_losses = self.vq_module(flat_states, compute_loss=True)
-        
-        vq_forward_time = time.time() - vq_forward_start
-        print(f"[{self._ts()}]   _update_vq_module: VQ forward passes done in {vq_forward_time:.3f}s")
         
         # Compute VQ losses
         total_vq_loss, vq_loss_dict = self.vq_loss.total_vq_loss(embeddings, quantized_embeddings)
