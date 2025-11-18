@@ -1,14 +1,13 @@
 """
 统一实验运行入口
 
-自动创建实验目录并运行训练和分析
+通过YAML配置文件运行实验，自动创建实验目录并执行训练和分析
 
 用法:
-    python scripts/run_experiment.py \
-        --algorithm vq_hc_sac \
-        --env-config configs/environments/3vs6.yaml \
-        --total-steps 100000 \
-        --exp-name baseline
+    python scripts/run_experiment.py --config configs/example_full_config.yaml
+    
+    # 跳过自动分析
+    python scripts/run_experiment.py --config configs/small_scale_test.yaml --skip-analysis
 """
 
 import argparse
@@ -54,14 +53,7 @@ def create_experiment_dir(algorithm: str, n_agents: int, n_nodes: int,
     return exp_dir
 
 
-def load_env_config(config_path: str) -> dict:
-    """加载环境配置文件"""
-    with open(config_path, encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-    return config
-
-
-def save_experiment_config(exp_dir: Path, args, env_config: dict):
+def save_experiment_config(exp_dir: Path, args, env_config: dict, algorithm_config: dict = None):
     """保存完整的实验配置"""
     full_config = {
         'experiment': {
@@ -80,40 +72,30 @@ def save_experiment_config(exp_dir: Path, args, env_config: dict):
         'environment': env_config
     }
     
+    # 如果有算法配置，也保存
+    if algorithm_config:
+        full_config['algorithm_config'] = algorithm_config
+    
+    # 保存为JSON格式
     with open(exp_dir / 'config.json', 'w') as f:
         json.dump(full_config, f, indent=2)
+    
+    # 也保存为YAML格式，方便查看和修改
+    with open(exp_dir / 'config.yaml', 'w', encoding='utf-8') as f:
+        yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True)
     
     return full_config
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='运行单个实验',
+        description='运行实验 - 使用YAML配置文件',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
-    # 必需参数
-    parser.add_argument('--algorithm', type=str, required=True,
-                       help='算法名称，如: vq_hc_sac')
-    parser.add_argument('--env-config', type=str, required=True,
-                       help='环境配置文件路径，如: configs/environments/3vs6.yaml')
-    
-    # 训练参数
-    parser.add_argument('--total-steps', type=int, default=100000,
-                       help='总训练步数')
-    parser.add_argument('--eval-interval', type=int, default=10000,
-                       help='评估间隔（步数）')
-    parser.add_argument('--log-interval', type=int, default=1000,
-                       help='日志记录间隔（步数）')
-    
-    # 实验参数
-    parser.add_argument('--exp-name', type=str, default='baseline',
-                       help='实验名称（用于目录命名），如: baseline, scale, no_pbrs')
-    parser.add_argument('--seed', type=int, default=42,
-                       help='随机种子')
-    parser.add_argument('--device', type=str, default='cpu',
-                       choices=['cpu', 'cuda'],
-                       help='训练设备')
+    # 必需参数：配置文件路径
+    parser.add_argument('--config', type=str, required=True,
+                       help='实验配置文件路径，如: configs/example_full_config.yaml')
     
     # 可选参数
     parser.add_argument('--skip-analysis', action='store_true',
@@ -121,11 +103,40 @@ def main():
     
     args = parser.parse_args()
     
-    # 加载环境配置
+    # 加载配置文件
     try:
-        env_config = load_env_config(args.env_config)
+        with open(args.config, 'r', encoding='utf-8') as f:
+            full_config = yaml.safe_load(f)
+        
+        # 验证配置文件包含必需的部分
+        required_sections = ['experiment', 'training', 'environment', 'algorithm_config']
+        for section in required_sections:
+            if section not in full_config:
+                raise ValueError(f"配置文件缺少必需的部分: {section}")
+        
+        # 从配置文件提取参数
+        args.algorithm = full_config['experiment']['algorithm']
+        args.exp_name = full_config['experiment']['name']
+        args.seed = full_config['experiment']['seed']
+        args.device = full_config['experiment']['device']
+        
+        args.total_steps = full_config['training']['total_steps']
+        args.eval_interval = full_config['training']['eval_interval']
+        args.log_interval = full_config['training']['log_interval']
+        
+        env_config = full_config['environment']
+        algorithm_config = full_config['algorithm_config']
+        
+        print(f"📋 已加载配置文件: {args.config}")
+        
+    except FileNotFoundError:
+        print(f"❌ 配置文件不存在: {args.config}")
+        sys.exit(1)
+    except KeyError as e:
+        print(f"❌ 配置文件缺少必需的字段: {e}")
+        sys.exit(1)
     except Exception as e:
-        print(f"❌ 加载环境配置失败: {e}")
+        print(f"❌ 加载配置文件失败: {e}")
         sys.exit(1)
     
     n_agents = env_config['n_agents']
@@ -148,8 +159,8 @@ def main():
     print("="*70 + "\n")
     
     # 保存实验配置
-    full_config = save_experiment_config(exp_dir, args, env_config)
-    print(f"✓ 实验配置已保存: {exp_dir / 'config.json'}\n")
+    full_config = save_experiment_config(exp_dir, args, env_config, algorithm_config)
+    print(f"✓ 实验配置已保存: {exp_dir / 'config.yaml'}\n")
     
     # 动态导入并运行训练
     try:
@@ -162,15 +173,22 @@ def main():
         
         # 运行训练
         print(f"开始训练 {args.algorithm}...\n")
-        train_module.run_training(
-            env_config=env_config,
-            save_dir=exp_dir,
-            total_steps=args.total_steps,
-            eval_interval=args.eval_interval,
-            log_interval=args.log_interval,
-            seed=args.seed,
-            device=args.device
-        )
+        # 传递algorithm_config（如果有的话）
+        run_training_kwargs = {
+            'env_config': env_config,
+            'save_dir': exp_dir,
+            'total_steps': args.total_steps,
+            'eval_interval': args.eval_interval,
+            'log_interval': args.log_interval,
+            'seed': args.seed,
+            'device': args.device
+        }
+        
+        # 如果有算法配置，也传递给训练函数
+        if algorithm_config:
+            run_training_kwargs['algorithm_config'] = algorithm_config
+        
+        train_module.run_training(**run_training_kwargs)
         
         print("\n" + "="*70)
         print("✓ 训练完成！")

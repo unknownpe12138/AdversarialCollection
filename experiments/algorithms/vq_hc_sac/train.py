@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import pickle
+import yaml
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent.parent.parent
@@ -82,7 +83,35 @@ def create_environment(env_config: dict):
     return env
 
 
-def create_trainer(env, save_dir: Path, device: str = 'cpu'):
+def load_config_from_yaml(config_path: str = None):
+    """
+    从YAML文件加载配置
+    
+    Args:
+        config_path: 配置文件路径，默认使用config_template.yaml
+    
+    Returns:
+        配置字典
+    """
+    if config_path is None:
+        # 默认使用config_template.yaml
+        config_path = Path(__file__).parent / "config_template.yaml"
+    else:
+        config_path = Path(config_path)
+    
+    if not config_path.exists():
+        print(f"⚠️  配置文件不存在: {config_path}")
+        print("   将使用默认配置")
+        return None
+    
+    print(f"📋 加载配置文件: {config_path}")
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config_dict = yaml.safe_load(f)
+    
+    return config_dict
+
+
+def create_trainer(env, save_dir: Path, device: str = 'cpu', config_path: str = None):
     """
     创建VQ-HC-SAC训练器
     
@@ -90,6 +119,7 @@ def create_trainer(env, save_dir: Path, device: str = 'cpu'):
         env: 环境实例
         save_dir: 保存目录
         device: 训练设备
+        config_path: 配置文件路径（可选）
     
     Returns:
         训练器实例
@@ -98,51 +128,94 @@ def create_trainer(env, save_dir: Path, device: str = 'cpu'):
     print("创建VQ-HC-SAC训练器...")
     print("-"*70)
     
-    # 配置（根据环境规模动态调整）
-    n_agents = env.n_agents
-    n_nodes = env.graph.n_nodes
+    # 尝试从配置文件加载
+    yaml_config = load_config_from_yaml(config_path)
     
-    # 小规模: <10个智能体
-    if n_agents < 10:
-        # 小规模问题建议使用CPU（GPU利用率低）
-        # 如果非要用GPU，需要更大的batch size
-        batch_size = 128 if (device == 'cuda' and n_agents >= 5) else 32
+    if yaml_config is not None:
+        # 使用配置文件的设置
+        print("✅ 使用配置文件中的设置")
+        
+        # 从YAML配置创建VQHCSACConfig
         config = VQHCSACConfig(
-            n_roles=2,
-            embedding_dim=32,
-            encoder_hidden_dims=[64, 64],
-            actor_hidden_dims=[128, 128],
-            critic_hidden_dims=[128, 128],
-            batch_size=batch_size,
-            buffer_size=50000,
-            warmup_steps=500,
+            # 角色配置
+            n_roles=yaml_config['roles']['n_roles'],
+            embedding_dim=yaml_config['roles']['embedding_dim'],
+            
+            # 网络架构
+            encoder_hidden_dims=yaml_config['networks']['encoder']['hidden_dims'],
+            actor_hidden_dims=yaml_config['networks']['actor']['hidden_dims'],
+            critic_hidden_dims=yaml_config['networks']['critic']['hidden_dims'],
+            
+            # 训练参数
+            batch_size=yaml_config['training']['batch_size'],
+            buffer_size=yaml_config['training']['buffer_size'],
+            warmup_steps=yaml_config['training']['warmup_steps'],
+            gamma=yaml_config['training']['gamma'],
+            tau=yaml_config['training']['tau'],
+            
+            # 学习率
+            actor_lr=yaml_config['learning_rates']['actor'],
+            critic_lr=yaml_config['learning_rates']['critic'],
+            encoder_lr=yaml_config['learning_rates']['encoder'],
+            alpha_lr=yaml_config['learning_rates']['alpha'],
+            
+            # VQ模块
+            vq_beta=yaml_config['vq']['beta'],
+            use_ema_codebook=yaml_config['vq']['use_ema'],
+            
+            # 更新策略
+            update_frequency=yaml_config['updates']['frequency'],
+            updates_per_step=yaml_config['updates']['updates_per_step'],
+            clip_grad_norm=yaml_config['updates'].get('clip_grad_norm', 1.0),
         )
-    # 中等规模: 10-20个智能体
-    elif n_agents < 20:
-        batch_size = 256 if device == 'cuda' else 64
-        config = VQHCSACConfig(
-            n_roles=3,
-            embedding_dim=64,
-            encoder_hidden_dims=[128, 128],
-            actor_hidden_dims=[256, 256],
-            critic_hidden_dims=[256, 256],
-            batch_size=batch_size,
-            buffer_size=100000,
-            warmup_steps=1000,
-        )
-    # 大规模: >=20个智能体
+        
     else:
-        batch_size = 512 if device == 'cuda' else 128
-        config = VQHCSACConfig(
-            n_roles=4,
-            embedding_dim=128,
-            encoder_hidden_dims=[256, 256],
-            actor_hidden_dims=[512, 512],
-            critic_hidden_dims=[512, 512],
-            batch_size=batch_size,
-            buffer_size=200000,
-            warmup_steps=2000,
-        )
+        # 使用原来的动态配置逻辑
+        print("⚠️  使用默认配置（根据环境规模动态调整）")
+        n_agents = env.n_agents
+        n_nodes = env.graph.n_nodes
+        
+        # 小规模: <10个智能体
+        if n_agents < 10:
+            # 小规模问题建议使用CPU（GPU利用率低）
+            # 如果非要用GPU，需要更大的batch size
+            batch_size = 128 if (device == 'cuda' and n_agents >= 5) else 32
+            config = VQHCSACConfig(
+                n_roles=2,
+                embedding_dim=32,
+                encoder_hidden_dims=[64, 64],
+                actor_hidden_dims=[128, 128],
+                critic_hidden_dims=[128, 128],
+                batch_size=batch_size,
+                buffer_size=50000,
+                warmup_steps=500,
+            )
+        # 中等规模: 10-20个智能体
+        elif n_agents < 20:
+            batch_size = 256 if device == 'cuda' else 64
+            config = VQHCSACConfig(
+                n_roles=3,
+                embedding_dim=64,
+                encoder_hidden_dims=[128, 128],
+                actor_hidden_dims=[256, 256],
+                critic_hidden_dims=[256, 256],
+                batch_size=batch_size,
+                buffer_size=100000,
+                warmup_steps=1000,
+            )
+        # 大规模: >=20个智能体
+        else:
+            batch_size = 512 if device == 'cuda' else 128
+            config = VQHCSACConfig(
+                n_roles=4,
+                embedding_dim=128,
+                encoder_hidden_dims=[256, 256],
+                actor_hidden_dims=[512, 512],
+                critic_hidden_dims=[512, 512],
+                batch_size=batch_size,
+                buffer_size=200000,
+                warmup_steps=2000,
+            )
     
     # 创建训练器
     trainer = VQHCSACTrainer(
@@ -168,7 +241,8 @@ def run_training(env_config: dict,
                 eval_interval: int = 10000,
                 log_interval: int = 1000,
                 seed: int = 42,
-                device: str = 'cpu'):
+                device: str = 'cpu',
+                algorithm_config: dict = None):
     """
     VQ-HC-SAC训练入口函数
     
@@ -182,6 +256,7 @@ def run_training(env_config: dict,
         log_interval: 日志间隔
         seed: 随机种子
         device: 训练设备 ('cpu' or 'cuda')
+        algorithm_config: 算法配置字典（可选，来自统一配置文件）
     """
     # 设置随机种子
     np.random.seed(seed)
@@ -197,7 +272,80 @@ def run_training(env_config: dict,
     env = create_environment(env_config)
     
     # 2. 创建训练器
-    trainer, config = create_trainer(env, save_dir, device)
+    # 配置优先级：
+    # 1. algorithm_config参数（来自run_experiment.py的统一配置文件）
+    # 2. save_dir中的algorithm_config.yaml（如果存在）
+    # 3. 算法目录中的config_template.yaml
+    # 4. 如果都不存在，使用默认配置
+    
+    config_path = None
+    
+    # 如果有传入的算法配置，优先使用
+    if algorithm_config:
+        # 将算法配置保存为临时文件供create_trainer读取
+        temp_config = save_dir / "algorithm_config.yaml"
+        with open(temp_config, 'w', encoding='utf-8') as f:
+            yaml.dump(algorithm_config, f, default_flow_style=False, allow_unicode=True)
+        config_path = str(temp_config)
+        print(f"📋 使用传入的算法配置")
+    else:
+        # 检查save_dir中是否有配置文件
+        custom_config = save_dir / "algorithm_config.yaml"
+        if custom_config.exists():
+            config_path = str(custom_config)
+            print(f"📋 找到自定义配置文件: {custom_config}")
+        else:
+            # 使用默认模板
+            default_config = Path(__file__).parent / "config_template.yaml"
+            if default_config.exists():
+                config_path = str(default_config)
+                print(f"📋 使用默认配置模板: {default_config}")
+    
+    trainer, config = create_trainer(env, save_dir, device, config_path)
+    
+    # 保存实际使用的配置
+    actual_config_path = save_dir / "actual_config.yaml"
+    with open(actual_config_path, 'w', encoding='utf-8') as f:
+        # 将配置转换为字典格式
+        config_dict = {
+            'algorithm': {
+                'name': 'vq_hc_sac',
+                'version': '1.0.0'
+            },
+            'roles': {
+                'n_roles': config.n_roles,
+                'embedding_dim': config.embedding_dim
+            },
+            'networks': {
+                'encoder': {'hidden_dims': config.encoder_hidden_dims},
+                'actor': {'hidden_dims': config.actor_hidden_dims},
+                'critic': {'hidden_dims': config.critic_hidden_dims}
+            },
+            'training': {
+                'batch_size': config.batch_size,
+                'buffer_size': config.buffer_size,
+                'warmup_steps': config.warmup_steps,
+                'gamma': config.gamma,
+                'tau': config.tau
+            },
+            'learning_rates': {
+                'actor': config.actor_lr,
+                'critic': config.critic_lr,
+                'encoder': config.encoder_lr,
+                'alpha': config.alpha_lr
+            },
+            'vq': {
+                'beta': config.vq_beta,
+                'use_ema': config.use_ema_codebook
+            },
+            'updates': {
+                'frequency': config.update_frequency,
+                'updates_per_step': config.updates_per_step,
+                'clip_grad_norm': config.clip_grad_norm
+            }
+        }
+        yaml.dump(config_dict, f, default_flow_style=False, allow_unicode=True)
+        print(f"📝 实际使用的配置已保存到: {actual_config_path}")
     
     # 3. 执行训练
     print("\n" + "="*70)

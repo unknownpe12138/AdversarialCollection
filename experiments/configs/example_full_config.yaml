@@ -1,0 +1,72 @@
+# 完整实验配置文件示例
+# 包含实验、环境、训练、算法所有参数
+
+# ==================== 实验信息 ====================
+experiment:
+  name: "baseline_experiment"  # 实验名称
+  algorithm: "vq_hc_sac"       # 算法名称
+  seed: 42                     # 随机种子
+  device: "cuda"               # 训练设备 (cpu/cuda)
+
+# ==================== 训练参数 ====================
+training:
+  total_steps: 100000          # 总训练步数
+  eval_interval: 10000         # 评估间隔
+  log_interval: 1000           # 日志间隔
+  save_interval: 5000          # 保存间隔
+
+# ==================== 环境配置 ====================
+environment:
+  n_agents: 3                  # 智能体数量
+  n_nodes: 6                   # 节点数量
+  graph_type: "random"         # 图类型 (random/grid/custom)
+  edge_probability: 0.3        # 边概率（random图）
+  graph_seed: 42               # 图生成种子
+  max_steps: 100               # 最大步数
+  use_pbrs: true               # 是否使用势函数奖励塑形
+  utility_range: [5.0, 20.0]   # 效用范围
+  risk_range: [0.1, 0.5]       # 风险范围
+  death_penalty: 10.0          # 死亡惩罚
+
+# ==================== 算法配置 ====================
+algorithm_config:
+  # 角色配置
+  roles:
+    n_roles: 2                 # 角色数量
+    embedding_dim: 32          # 角色嵌入维度
+  
+  # 网络架构
+  networks:
+    encoder:
+      hidden_dims: [64, 64]    # 编码器隐藏层
+    actor:
+      hidden_dims: [128, 128]  # Actor隐藏层
+    critic:
+      hidden_dims: [128, 128]  # Critic隐藏层
+      use_twin: true           # 使用Twin Critic
+  
+  # 训练参数
+  training:
+    batch_size: 32
+    buffer_size: 50000
+    warmup_steps: 500
+    gamma: 0.99
+    tau: 0.005
+  
+  # 学习率
+  learning_rates:
+    actor: 0.0003
+    critic: 0.0003
+    encoder: 0.0003
+    alpha: 0.0003
+  
+  # VQ模块
+  vq:
+    beta: 0.25                 # Commitment cost
+    use_ema: false             # 使用EMA更新codebook
+  
+  # 更新策略
+  updates:
+    frequency: 1               # 每步更新次数
+    updates_per_step: 1
+    clip_grad_norm: 1.0
