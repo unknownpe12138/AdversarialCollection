@@ -61,9 +61,6 @@ class RoleCritic(nn.Module):
         self.role_aggregation_dim = role_aggregation_dim
         self.action_type = action_type
         
-        # Debug flag: only print once
-        self._debug_printed = False
-        
         # For discrete actions, use one-hot encoding
         if action_type == 'discrete':
             action_input_dim = action_dim
@@ -140,16 +137,6 @@ class RoleCritic(nn.Module):
         """
         batch_size = individual_state.shape[0]
         
-        # Debug: Print input shapes before processing (only once)
-        if not self._debug_printed:
-            print(f"\n[DEBUG Critic] Input shapes (first call):")
-            print(f"  individual_state: {individual_state.shape}")
-            print(f"  action (original): {action.shape}")
-            print(f"  env_state: {env_state.shape}")
-            print(f"  role_aggregations: {role_aggregations.shape}")
-            print(f"  action type: {self.action_type}, action_dim: {self.action_dim}")
-            print(f"  Expected role_aggregations: (batch={batch_size}, n_roles={self.n_roles}, dim={self.role_aggregation_dim})")
-        
         # Process action
         if self.action_type == 'discrete':
             # Convert discrete action to one-hot
@@ -172,26 +159,13 @@ class RoleCritic(nn.Module):
         # Flatten role aggregations: (batch_size, n_roles, dim) → (batch_size, n_roles * dim)
         role_aggregations_flat = role_aggregations.reshape(batch_size, -1)
         
-        if not self._debug_printed:
-            print(f"  role_aggregations_flat: {role_aggregations_flat.shape}")
-        
         # Concatenate all inputs
-        if not self._debug_printed:
-            print(f"  action_input (after processing): {action_input.shape}")
-        
         critic_input = torch.cat([
             individual_state,
             action_input,
             env_state,
             role_aggregations_flat
         ], dim=-1)
-        
-        if not self._debug_printed:
-            print(f"  critic_input (after concat): {critic_input.shape}")
-            print(f"  Expected input dim: {self.input_dim}")
-            print(f"  Network first layer weight: {list(self.network.children())[0].weight.shape}")
-            print(f"  ✓ Debug info printed once, suppressing future outputs\n")
-            self._debug_printed = True
         
         # Forward through network
         q_value = self.network(critic_input)
