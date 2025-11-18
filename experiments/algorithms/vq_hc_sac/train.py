@@ -281,9 +281,11 @@ def run_training(env_config: dict,
     config_path = None
     
     # 如果有传入的算法配置，优先使用
+    temp_config_file = None
     if algorithm_config:
         # 将算法配置保存为临时文件供create_trainer读取
         temp_config = save_dir / "algorithm_config.yaml"
+        temp_config_file = temp_config  # 记录临时文件路径，稍后删除
         with open(temp_config, 'w', encoding='utf-8') as f:
             yaml.dump(algorithm_config, f, default_flow_style=False, allow_unicode=True)
         config_path = str(temp_config)
@@ -302,50 +304,6 @@ def run_training(env_config: dict,
                 print(f"📋 使用默认配置模板: {default_config}")
     
     trainer, config = create_trainer(env, save_dir, device, config_path)
-    
-    # 保存实际使用的配置
-    actual_config_path = save_dir / "actual_config.yaml"
-    with open(actual_config_path, 'w', encoding='utf-8') as f:
-        # 将配置转换为字典格式
-        config_dict = {
-            'algorithm': {
-                'name': 'vq_hc_sac',
-                'version': '1.0.0'
-            },
-            'roles': {
-                'n_roles': config.n_roles,
-                'embedding_dim': config.embedding_dim
-            },
-            'networks': {
-                'encoder': {'hidden_dims': config.encoder_hidden_dims},
-                'actor': {'hidden_dims': config.actor_hidden_dims},
-                'critic': {'hidden_dims': config.critic_hidden_dims}
-            },
-            'training': {
-                'batch_size': config.batch_size,
-                'buffer_size': config.buffer_size,
-                'warmup_steps': config.warmup_steps,
-                'gamma': config.gamma,
-                'tau': config.tau
-            },
-            'learning_rates': {
-                'actor': config.actor_lr,
-                'critic': config.critic_lr,
-                'encoder': config.encoder_lr,
-                'alpha': config.alpha_lr
-            },
-            'vq': {
-                'beta': config.vq_beta,
-                'use_ema': config.use_ema_codebook
-            },
-            'updates': {
-                'frequency': config.update_frequency,
-                'updates_per_step': config.updates_per_step,
-                'clip_grad_norm': config.clip_grad_norm
-            }
-        }
-        yaml.dump(config_dict, f, default_flow_style=False, allow_unicode=True)
-        print(f"📝 实际使用的配置已保存到: {actual_config_path}")
     
     # 3. 执行训练
     print("\n" + "="*70)
@@ -397,6 +355,11 @@ def run_training(env_config: dict,
     # 6. 保存最终模型
     trainer.save_checkpoint('final_model.pt')
     print(f"✓ 最终模型已保存: {save_dir / 'checkpoints' / 'final_model.pt'}")
+    
+    # 7. 清理临时配置文件
+    if temp_config_file and temp_config_file.exists():
+        temp_config_file.unlink()
+        print(f"✓ 已清理临时配置文件")
     
     print("\n" + "="*70)
     print("训练流程完成")

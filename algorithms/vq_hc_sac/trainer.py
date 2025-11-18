@@ -86,6 +86,7 @@ class VQHCSACTrainer:
         # Statistics tracking
         self.episode_returns = deque(maxlen=100)
         self.episode_lengths = deque(maxlen=100)
+        self.episode_utilities = deque(maxlen=100)  # 追踪平均效用
         
         # Debug flags
         self._first_critic_update = True
@@ -275,6 +276,7 @@ class VQHCSACTrainer:
         obs, _ = self.env.reset()
         episode_return = np.zeros(self.n_agents)
         episode_length = 0
+        episode_utility = 0.0  # 累积效用
         
         start_time = time.time()
         last_print_time = time.time()
@@ -282,8 +284,8 @@ class VQHCSACTrainer:
         # Training loop
         while self.total_steps < total_steps:
             # Collect experience
-            obs, episode_return, episode_length, episode_done = self._collect_step(
-                obs, episode_return, episode_length
+            obs, episode_return, episode_length, episode_done, episode_utility = self._collect_step(
+                obs, episode_return, episode_length, episode_utility
             )
             
             # Update networks (after warmup)
@@ -300,6 +302,8 @@ class VQHCSACTrainer:
                 self.episode_count += 1
                 self.episode_returns.append(episode_return.sum())
                 self.episode_lengths.append(episode_length)
+                avg_utility = episode_utility / episode_length if episode_length > 0 else 0.0
+                self.episode_utilities.append(avg_utility)
                 
                 history['episode_returns'].append(episode_return.sum())
                 history['episode_lengths'].append(episode_length)
@@ -308,6 +312,7 @@ class VQHCSACTrainer:
                 obs, _ = self.env.reset()
                 episode_return = np.zeros(self.n_agents)
                 episode_length = 0
+                episode_utility = 0.0
             
             # Logging
             if self.total_steps % log_interval == 0:
@@ -342,8 +347,9 @@ class VQHCSACTrainer:
         self,
         obs: Any,
         episode_return: np.ndarray,
-        episode_length: int
-    ) -> Tuple[Any, np.ndarray, int, bool]:
+        episode_length: int,
+        episode_utility: float = 0.0
+    ) -> Tuple[Any, np.ndarray, int, bool, float]:
         """
         Collect one step of experience.
         
@@ -399,7 +405,15 @@ class VQHCSACTrainer:
         episode_return += rewards_array
         episode_length += 1
         
-        return next_obs, episode_return, episode_length, done
+        # Extract utility from info if available
+        if 'collected_utility' in info:
+            step_utility = info['collected_utility']
+            if isinstance(step_utility, (list, np.ndarray)):
+                episode_utility += np.sum(step_utility)
+            else:
+                episode_utility += step_utility
+        
+        return next_obs, episode_return, episode_length, done, episode_utility
     
     def _select_actions(
         self,
@@ -742,13 +756,16 @@ class VQHCSACTrainer:
         elapsed_time = time.time() - start_time
         steps_per_sec = self.total_steps / elapsed_time if elapsed_time > 0 else 0
         
-        print(f"\n[Step {self.total_steps}]")
+        print(f"\n[{self._ts()}] [Step {self.total_steps}]")
         print(f"  Episodes: {self.episode_count}")
         print(f"  Steps/sec: {steps_per_sec:.1f}")
         
         if self.episode_returns:
             print(f"  Mean return (100ep): {np.mean(self.episode_returns):.2f}")
             print(f"  Mean length (100ep): {np.mean(self.episode_lengths):.1f}")
+        
+        if self.episode_utilities:
+            print(f"  Mean utility (100ep): {np.mean(self.episode_utilities):.2f}")
         
         # Buffer stats
         buffer_stats = self.replay_buffer.get_statistics()
@@ -769,10 +786,13 @@ class VQHCSACTrainer:
         self.role_manager.eval_mode()
         
         episode_returns = []
+        episode_utilities = []
         
         for ep in range(n_episodes):
             obs, _ = self.env.reset()
             episode_return = 0.0
+            episode_utility = 0.0
+            episode_length = 0
             done = False
             
             while not done:
@@ -780,7 +800,7 @@ class VQHCSACTrainer:
                 individual_states = self._process_observations(obs)
                 actions, _ = self._select_actions(individual_states)
                 
-                obs, rewards, terminated, truncated, _ = self.env.step(actions)
+                obs, rewards, terminated, truncated, info = self.env.step(actions)
                 done = terminated or truncated
                 
                 # Convert rewards from dict to array if needed
@@ -790,13 +810,28 @@ class VQHCSACTrainer:
                     rewards_sum = np.sum(rewards)
                 
                 episode_return += rewards_sum
+                episode_length += 1
+                
+                # Extract utility from info if available
+                if 'collected_utility' in info:
+                    step_utility = info['collected_utility']
+                    if isinstance(step_utility, (list, np.ndarray)):
+                        episode_utility += np.sum(step_utility)
+                    else:
+                        episode_utility += step_utility
             
             episode_returns.append(episode_return)
+            avg_utility = episode_utility / episode_length if episode_length > 0 else 0.0
+            episode_utilities.append(avg_utility)
         
         self.role_manager.train_mode()
         
         mean_return = np.mean(episode_returns)
         print(f"  Eval return: {mean_return:.2f} (+/- {np.std(episode_returns):.2f})")
+        
+        if episode_utilities:
+            mean_utility = np.mean(episode_utilities)
+            print(f"  Eval utility: {mean_utility:.2f} (+/- {np.std(episode_utilities):.2f})")
         
         return mean_return
     

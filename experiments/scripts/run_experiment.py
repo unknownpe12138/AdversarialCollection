@@ -53,38 +53,6 @@ def create_experiment_dir(algorithm: str, n_agents: int, n_nodes: int,
     return exp_dir
 
 
-def save_experiment_config(exp_dir: Path, args, env_config: dict, algorithm_config: dict = None):
-    """保存完整的实验配置"""
-    full_config = {
-        'experiment': {
-            'algorithm': args.algorithm,
-            'exp_name': args.exp_name,
-            'timestamp': datetime.now().isoformat(),
-            'exp_dir': str(exp_dir),
-            'seed': args.seed,
-            'device': args.device
-        },
-        'training': {
-            'total_steps': args.total_steps,
-            'eval_interval': args.eval_interval,
-            'log_interval': args.log_interval
-        },
-        'environment': env_config
-    }
-    
-    # 如果有算法配置，也保存
-    if algorithm_config:
-        full_config['algorithm_config'] = algorithm_config
-    
-    # 保存为JSON格式
-    with open(exp_dir / 'config.json', 'w') as f:
-        json.dump(full_config, f, indent=2)
-    
-    # 也保存为YAML格式，方便查看和修改
-    with open(exp_dir / 'config.yaml', 'w', encoding='utf-8') as f:
-        yaml.dump(full_config, f, default_flow_style=False, allow_unicode=True)
-    
-    return full_config
 
 
 def main():
@@ -157,10 +125,6 @@ def main():
     print(f"设备:      {args.device}")
     print(f"保存目录:  {exp_dir}")
     print("="*70 + "\n")
-    
-    # 保存实验配置
-    full_config = save_experiment_config(exp_dir, args, env_config, algorithm_config)
-    print(f"✓ 实验配置已保存: {exp_dir / 'config.yaml'}\n")
     
     # 动态导入并运行训练
     try:
